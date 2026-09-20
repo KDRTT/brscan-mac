@@ -1,5 +1,6 @@
 #include "paper_size.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace brscan::scand {
@@ -77,6 +78,19 @@ std::optional<brscan::Area> AreaForPaper(const std::string& paper_token,
 
 bool IsKnownPaper(const std::string& paper_token) {
   return FindEntry(paper_token) != nullptr;
+}
+
+brscan::Area RecenterAreaForSensor(const brscan::Area& area, int dpi,
+                                   int sensor_width_at_300) {
+  if (sensor_width_at_300 <= 0 ||
+      sensor_width_at_300 == kCapturedSensorWidthAt300 || dpi <= 0) {
+    return area;
+  }
+  const int sensor = ScaleCoord(sensor_width_at_300, dpi);
+  int width = std::min(area.x1 - area.x0, sensor);
+  if (width < 0) width = 0;
+  const int x0 = area.x0 > 0 ? (sensor - width) / 2 : 0;
+  return brscan::Area{x0, area.y0, x0 + width, area.y1};
 }
 
 }  // namespace brscan::scand

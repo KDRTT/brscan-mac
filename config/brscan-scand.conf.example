@@ -28,6 +28,12 @@
 # doesn't exist. A leading ~ is expanded. Defaults to ~/Scans.
 # save_dir = ~/Scans
 
+# The scanner's sensor width in pixels at 300 dpi. The built-in paper sizes
+# were captured on an MFC-J6920DW (3472 px, A3) and are framed for that
+# sensor; a narrower model needs its own width so pages are centered and not
+# cut off. MFC-J5720DW: 2527. Defaults to 3472.
+# sensor_width = 2527
+
 # Which destinations this Mac advertises in the printer's Scan menu. A
 # comma-separated subset of file, image, ocr, email (case-insensitive).
 # Registering fewer FUNCs sends fewer SNMP Sets to the printer. Defaults to

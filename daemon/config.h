@@ -49,6 +49,11 @@ struct Config {
   std::string display_name;  // Defaulted to this host's name; see
                               // DefaultDisplayName().
   std::string save_dir = kDefaultSaveDir;
+  // Scanner sensor width in px at 300 dpi (paper_size.h
+  // kCapturedSensorWidthAt300 = the J6920DW's 3472 by default). Set for a
+  // narrower model (MFC-J5720DW: 2527) so the paper-table scan areas are
+  // re-centered within it -- see RecenterAreaForSensor.
+  int sensor_width_at_300 = 3472;
 
   // Per-FUNC scan settings. brscan::Params's own default constructor
   // already is color/300dpi/flatbed, which is this project's chosen
@@ -217,6 +222,8 @@ Config DefaultConfig();
 //                        `dns-sd -B _scanner._tcp`.
 //   display_name        name shown in the printer's Scan menu
 //   save_dir            FILE-destination output directory (~ expanded)
+//   sensor_width        scanner sensor width in px at 300 dpi (default
+//                        3472, the MFC-J6920DW; 2527 for the MFC-J5720DW)
 //   image_app           app name for the IMAGE destination's `open -a`
 //                        (empty: use the file's default app)
 //   email_to            recipient address the EMAIL destination's

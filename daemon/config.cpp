@@ -313,6 +313,10 @@ void ApplyKey(Config* cfg, const std::string& key, const std::string& value) {
     cfg->save_dir = ExpandHome(value);
     return;
   }
+  if (key == "sensor_width") {
+    if (const auto v = ParsePositiveInt(value)) cfg->sensor_width_at_300 = *v;
+    return;
+  }
   if (key == "image_app") {
     cfg->image_app = value;
     return;

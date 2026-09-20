@@ -182,6 +182,12 @@ std::optional<ButtonScanPlan> PlanButtonScan(
     }
   }
 
+  // The captured table is framed for the J6920DW's 3472-px sensor; re-center
+  // and clamp it for a narrower model when `sensor_width` is configured (a
+  // no-op at the default width, so the J6920DW request is unchanged).
+  plan.params.area = RecenterAreaForSensor(plan.params.area, plan.params.x_dpi,
+                                           cfg.sensor_width_at_300);
+
   // OCR's deliverable is a searchable PDF or one of the recognized-text
   // sinks (TXT/HTML/RTF -- see output_writer.h's OutputFormat and
   // action_ocr.h's WriteRecognizedText), chosen by the same ON/OFF

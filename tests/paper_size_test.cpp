@@ -25,6 +25,61 @@ void ExpectArea(const std::optional<brscan::Area>& got, int x0, int y0,
 // All 9 captured tokens, exact @300 dpi.
 // ---------------------------------------------------------------------
 
+// ---------------------------------------------------------------------
+// RecenterAreaForSensor: re-framing the captured (3472-px) table for a
+// narrower sensor (the MFC-J5720DW's 2527 px).
+// ---------------------------------------------------------------------
+
+TEST(RecenterAreaForSensorTest, CapturedWidthIsIdentity) {
+  const brscan::Area letter = *AreaForPaper("LETTER", 300);
+  const brscan::Area same =
+      RecenterAreaForSensor(letter, 300, kCapturedSensorWidthAt300);
+  EXPECT_EQ(same.x0, letter.x0);
+  EXPECT_EQ(same.x1, letter.x1);
+  EXPECT_EQ(same.y1, letter.y1);
+  // Non-positive width: also untouched.
+  EXPECT_EQ(RecenterAreaForSensor(letter, 300, 0).x0, letter.x0);
+}
+
+TEST(RecenterAreaForSensorTest, CenteredRowRecentersKeepingWidth) {
+  // Letter is 2512 wide (478..2990). In a 2527-px sensor: x0 = 7, x1 = 2519.
+  const brscan::Area a = RecenterAreaForSensor(*AreaForPaper("LETTER", 300),
+                                               300, 2527);
+  EXPECT_EQ(a.x1 - a.x0, 2512);
+  EXPECT_EQ(a.x0, 7);
+  EXPECT_EQ(a.x1, 2519);
+  EXPECT_EQ(a.y0, 0);
+  EXPECT_EQ(a.y1, 3253);
+  // A4 (2448 wide): x0 = 39.
+  const brscan::Area a4 = RecenterAreaForSensor(*AreaForPaper("A4", 300), 300,
+                                                2527);
+  EXPECT_EQ(a4.x0, 39);
+  EXPECT_EQ(a4.x1, 39 + 2448);
+}
+
+TEST(RecenterAreaForSensorTest, CornerRegisteredRowStaysAtZero) {
+  const brscan::Area a5 = RecenterAreaForSensor(*AreaForPaper("A5", 300), 300,
+                                                2527);
+  EXPECT_EQ(a5.x0, 0);
+  EXPECT_EQ(a5.x1, 1712);
+}
+
+TEST(RecenterAreaForSensorTest, WiderThanSensorClampsToSensor) {
+  // A3 (3472 wide) on a 2527 sensor: fills the sensor, no wrap past its edge.
+  const brscan::Area a3 = RecenterAreaForSensor(*AreaForPaper("A3", 300), 300,
+                                                2527);
+  EXPECT_EQ(a3.x0, 0);
+  EXPECT_EQ(a3.x1, 2527);
+}
+
+TEST(RecenterAreaForSensorTest, ScalesSensorWithDpi) {
+  const brscan::Area a = RecenterAreaForSensor(*AreaForPaper("LETTER", 150),
+                                               150, 2527);
+  // Sensor 1264 @150 (lround(2527/2)); Letter 1256 wide -> x0 = 4.
+  EXPECT_EQ(a.x1 - a.x0, 1256);
+  EXPECT_EQ(a.x0, 4);
+}
+
 TEST(AreaForPaperTest, Letter300Exact) {
   ExpectArea(AreaForPaper("LETTER", 300), 478, 0, 2990, 3253);
 }

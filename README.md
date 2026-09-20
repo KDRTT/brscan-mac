@@ -14,13 +14,15 @@ scan protocol from a native arm64 build.
 | Model | Flatbed | ADF | Notes |
 |---|---|---|---|
 | MFC-J6920DW | yes | yes | The development unit; A3 glass and feeder |
-| MFC-J5720DW | yes | yes | A4 glass, A4-wide / Legal-long feeder. Selects the feeder with `ESC S ADF` and streams open-ended JPEGs; both handled automatically (see PROVENANCE.md) |
+| MFC-J5720DW | yes | yes | A4 glass, A4-wide / Legal-long feeder. Selects the feeder with `ESC S ADF` and streams open-ended JPEGs; both handled automatically (see PROVENANCE.md). For the scan button set `sensor_width = 2527` in `brscan-scand.conf` |
 
 Other Brother network MFPs of the same generation very likely speak the same
 protocol. To try one: add its Bonjour `mdl` string to
 `ica-module/DeviceMatchingInfo.plist` (find it with `dns-sd -L`), add a
 `DeviceProfile` for its glass/feeder size in `ica-module/scan_translate.h`,
-and run `build/brscan-cli` against it first.
+and run `build/brscan-cli` against it first. `BRSCAN_TRACE=1` in the
+environment makes any of the tools hexdump the wire exchange to stderr, which
+is usually all that is needed to see where a new model deviates.
 
 ## Status
 

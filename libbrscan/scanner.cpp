@@ -36,6 +36,16 @@ constexpr int kAckTimeoutMs = 5000;
 // device-panel cancel emits no status, the stream just stops).
 constexpr int kScanTimeoutMs = 20000;
 
+// How long to wait, after a page's end-of-page marker, for what follows it:
+// the job-final 0x80 or the next page's block header. This is where a
+// flatbed scan-to-PC job parks while the printer's panel asks "Next page?"
+// -- the device sends nothing until the user answers (No -> 0x80; Yes ->
+// the next page after they press Start). Observed on the MFC-J5720DW: with
+// the plain kScanTimeoutMs the completed page was discarded whenever the
+// prompt was answered later than 20 s. Bounded so an abandoned prompt still
+// ends the job; the ADF and an answered prompt never wait this long.
+constexpr int kNextPageTimeoutMs = 300000;
+
 // How long the lone-status-byte check (jam 0xc3 / cancel 0x86 at ESC X) waits for
 // a SECOND byte before concluding the first was alone. This must be short, NOT the
 // full kScanTimeoutMs: on a real jam/cancel the device sends the one status byte
@@ -865,7 +875,7 @@ Status RunColorScan(Framer* framer, int timeout_ms, const BandCallback& on_band,
       // Peek(2) blocks to the read timeout against the button flow's
       // single byte + connection close (the live 1d.5 failure).
       std::vector<uint8_t> tail;
-      s = framer->Peek(1, timeout_ms, &tail);
+      s = framer->Peek(1, std::max(timeout_ms, kNextPageTimeoutMs), &tail);
       if (s != Status::kOk) return s;
       if (tail[0] == 0x80) {
         // Job done. Any page still accumulating never got its marker: a
@@ -1181,7 +1191,7 @@ Status RunRlengthScan(Framer* framer, const Params& exec_params, int timeout_ms,
       // one 0x80 then closes, the driver flow 0x80 0x80), anything else is the
       // next row's block header (loop, do NOT consume).
       std::vector<uint8_t> tail;
-      s = framer->Peek(1, timeout_ms, &tail);
+      s = framer->Peek(1, std::max(timeout_ms, kNextPageTimeoutMs), &tail);
       if (s != Status::kOk) return s;
       if (tail[0] == 0x80) {
         if (!in_progress.empty()) return Status::kProtocolError;
@@ -1519,7 +1529,7 @@ Status RunReadout(Framer* framer, const Params& exec_params, int timeout_ms,
     // single byte + connection close (the live BW/TIFF failure, same
     // root cause as the color path fixed in RunColorScan).
     std::vector<uint8_t> tail;
-    status = framer->Peek(1, timeout_ms, &tail);
+    status = framer->Peek(1, std::max(timeout_ms, kNextPageTimeoutMs), &tail);
     if (status != Status::kOk) return status;
     if (tail[0] == 0x80) {
       break;  // Job-final terminator: no more pages.

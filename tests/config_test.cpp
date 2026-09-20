@@ -76,6 +76,14 @@ TEST(ParseConfigTest, AppliesTopLevelOverrides) {
   EXPECT_EQ(cfg.save_dir, ExpandHome("~/MyScans"));
 }
 
+TEST(ParseConfigTest, SensorWidthDefaultsToCapturedAndParses) {
+  EXPECT_EQ(DefaultConfig().sensor_width_at_300, 3472);
+  EXPECT_EQ(ParseConfig("sensor_width = 2527\n").sensor_width_at_300, 2527);
+  // Non-positive / non-integer: ignored, default kept.
+  EXPECT_EQ(ParseConfig("sensor_width = 0\n").sensor_width_at_300, 3472);
+  EXPECT_EQ(ParseConfig("sensor_width = wide\n").sensor_width_at_300, 3472);
+}
+
 TEST(ParseConfigTest, AppliesActionSettingOverrides) {
   const Config cfg = ParseConfig(
       "image_app=Preview\n"

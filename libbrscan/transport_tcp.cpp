@@ -1,6 +1,8 @@
 #include "brscan/transport_tcp.h"
 
 #include <cerrno>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include <chrono>
@@ -121,8 +123,29 @@ void TcpTransport::Disconnect() {
   }
 }
 
+namespace {
+
+// BRSCAN_TRACE=1 in the environment hexdumps every transport read and write
+// to stderr (first 64 bytes, plus the length) -- the wire-level view needed
+// to characterise a new model or a stalled exchange without a packet capture.
+// Off by default; a debugging aid, not part of any normal flow.
+bool TraceEnabled() {
+  static const bool enabled = std::getenv("BRSCAN_TRACE") != nullptr;
+  return enabled;
+}
+
+void Trace(const char* dir, const uint8_t* buf, size_t len) {
+  if (!TraceEnabled()) return;
+  std::fprintf(stderr, "[trace] %s %zuB:", dir, len);
+  for (size_t i = 0; i < len && i < 64; ++i) std::fprintf(stderr, " %02x", buf[i]);
+  std::fprintf(stderr, "%s\n", len > 64 ? " ..." : "");
+}
+
+}  // namespace
+
 Status TcpTransport::Write(const uint8_t* buf, size_t len) {
   if (fd_ == -1) return Status::kIoError;
+  Trace("H->P", buf, len);
 
   size_t sent = 0;
   while (sent < len) {
@@ -179,6 +202,7 @@ Status TcpTransport::Read(uint8_t* buf, size_t cap, size_t* out_len,
     if (n == 0) return Status::kIoError;  // Peer closed the connection.
 
     *out_len = static_cast<size_t>(n);
+    Trace("P->H", buf, *out_len);
     return Status::kOk;
   }
 }
