@@ -65,8 +65,9 @@ std::optional<Offer> ParseOffer(const std::string& csv) {
   Offer offer;
   offer.x_dpi = values[0];
   offer.y_dpi = values[1];
-  // values[2] (flag), values[3] (f4), and values[5] (f6) are dropped; see
-  // the doc comment on Offer / ParseOffer in response.h.
+  // values[3] (f4) and values[5] (f6) are dropped; see the doc comment on
+  // Offer / ParseOffer in response.h.
+  offer.source_flag = values[2];
   offer.width_px = values[4];
   offer.height_px = values[6];
   return offer;

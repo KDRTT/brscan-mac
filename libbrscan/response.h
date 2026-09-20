@@ -18,10 +18,18 @@ namespace brscan {
 
 // Parses an ESC I offer: the comma-terminated ASCII line
 // `xdpi,ydpi,flag,f4,xmaxpx,f6,ymaxpx,` (note the trailing comma). Fields
-// `flag`, `f4`, and `f6` have no confirmed meaning (f4/f6 are constant
-// across dpi in every sample; `flag` is 2 for a per-scan grant and 1 for
-// the capability probe reply) and are intentionally dropped rather than
-// exposed with a guessed name.
+// `f4` and `f6` have no confirmed meaning (constant across dpi in every
+// sample) and are intentionally dropped rather than exposed with a guessed
+// name. `flag` is the SOURCE the device has settled on for the scan and is
+// exposed as Offer::source_flag: 1 = document feeder (then `ymaxpx` is 0,
+// length unknown), 2 = flatbed glass (a concrete `ymaxpx`). Evidence: the
+// J6920DW loaded-feeder capture offers `300,300,1,292,3460,0,0,` and the
+// empty-feeder (about to fall back to the glass) one `300,300,2,292,3460,
+// 427,5052,` (PROVENANCE.md); the MFC-J5720DW answers `...,1,...,0,0,` only
+// once its feeder is actually selected (see RunScan's ESC S ADF fallback).
+//
+inline constexpr int kOfferSourceFeeder = 1;
+inline constexpr int kOfferSourceFlatbed = 2;
 //
 // Returns std::nullopt if `csv` does not have exactly 7 comma-separated
 // fields plus the trailing empty field from the final comma, or if any of

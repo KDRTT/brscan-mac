@@ -1,4 +1,5 @@
 #include "brscan/scanner.h"
+#include "decode_jpeg.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -864,7 +865,7 @@ TEST(RunScan, TrueGrayAdfShortDeliveryCropsToSheet) {
   t.QueueRead(std::vector<uint8_t>{0x80});  // ESC D ADF ack: document loaded.
   t.QueueTimeout();                         // drain done
   // Requested height_px=4, but only 2 rows arrive before end-of-page.
-  t.QueueRead(EncodeOfferFrame("300,300,2,292,4,427,4,"));
+  t.QueueRead(EncodeOfferFrame("300,300,1,292,4,427,4,"));
 
   auto row0 = EncodeRlengthBlockHeader(0x40, 4);
   const std::vector<uint8_t> row0_payload = {0xA0, 0xA1, 0xA2, 0xA3};
@@ -903,7 +904,7 @@ TEST(RunScan, BlackWhiteAdfShortDeliveryCropsToSheet) {
   t.QueueRead(std::vector<uint8_t>{0x80});  // ESC D ADF ack: document loaded.
   t.QueueTimeout();                         // drain done
   // width_px=9 (row_bytes = ceil(9/8) = 2), height_px=4; 2 rows arrive.
-  t.QueueRead(EncodeOfferFrame("300,300,2,292,9,427,4,"));
+  t.QueueRead(EncodeOfferFrame("300,300,1,292,9,427,4,"));
 
   auto row0 = EncodeRlengthBlockHeader(0x42, 3);
   const std::vector<uint8_t> row0_payload = {0x01, 0xAA, 0xBB};
@@ -976,7 +977,7 @@ TEST(RunScan, TrueGrayAdfFullHeightNotCropped) {
   t.QueueRead(std::vector<uint8_t>{0x80});  // ESC D ADF ack: document loaded.
   t.QueueTimeout();                         // drain done
   // Requested height_px=2, and exactly 2 rows arrive (a size-matched sheet).
-  t.QueueRead(EncodeOfferFrame("300,300,2,292,4,427,2,"));
+  t.QueueRead(EncodeOfferFrame("300,300,1,292,4,427,2,"));
 
   auto row0 = EncodeRlengthBlockHeader(0x40, 4);
   const std::vector<uint8_t> row0_payload = {0xA0, 0xA1, 0xA2, 0xA3};
@@ -1039,7 +1040,7 @@ TEST(RunScan, AdfSelectsFeederWithEscDNotFlatbed) {
   QueueConnectPreamble(&t);
   t.QueueRead(std::vector<uint8_t>{0x80, 0x00});  // ESC D ADF ack
   t.QueueTimeout();                               // drain done
-  t.QueueRead(EncodeOfferFrame("300,300,2,292,3460,427,5052,"));
+  t.QueueRead(EncodeOfferFrame("300,300,1,292,3460,427,5052,"));
 
   const auto jpeg = MakeSyntheticJpeg(16, 8);
   auto payload = EncodeBlockHeader(static_cast<uint16_t>(jpeg.size()));
@@ -1091,6 +1092,127 @@ TEST(RunScan, AdfEmptyAckReportsNoPaper) {
       << "empty feeder must not reach ESC I negotiate";
   EXPECT_FALSE(Contains(t.written(), {0x1b, 0x58}))
       << "empty feeder must not reach ESC X execute";
+}
+
+// MFC-J5720DW feeder select (live probe, 2026-09-20; PROVENANCE.md): the unit
+// acks ESC D ADF with 0x80 but stays on the glass -- its ESC I offer names the
+// flatbed (source_flag 2, concrete height). RunScan must then re-select the
+// feeder with ESC S ADF and renegotiate; the second offer names the feeder
+// (source_flag 1, height 0) and the job proceeds to ESC X.
+TEST(RunScan, AdfFlatbedOfferFallsBackToEscSAdf) {
+  brscan::FakeTransport t;
+  QueueConnectPreamble(&t);
+  t.QueueRead(std::vector<uint8_t>{0x80});  // ESC D ADF ack (ignored by unit)
+  t.QueueTimeout();                         // drain done
+  t.QueueRead(EncodeOfferFrame("300,300,2,213,2527,295,3484,"));  // glass
+  t.QueueRead(std::vector<uint8_t>{0x80});  // ESC S ADF ack: loaded
+  t.QueueTimeout();                         // drain done
+  t.QueueRead(EncodeOfferFrame("300,300,1,213,2527,0,0,"));  // feeder
+
+  const auto jpeg = MakeSyntheticJpeg(16, 8);
+  auto payload = EncodeBlockHeader(static_cast<uint16_t>(jpeg.size()));
+  payload.insert(payload.end(), jpeg.begin(), jpeg.end());
+  t.QueueRead(payload);
+  t.QueueRead(EncodeJobFinalTerminator(1));
+
+  auto params = ColorParams();
+  params.source = brscan::Source::kAdf;
+  params.area = brscan::Area{0, 0, 16, 8};
+
+  std::vector<brscan::ScanResult> pages;
+  const auto status = brscan::RunScan(t, params, &pages);
+  ASSERT_EQ(status, brscan::Status::kOk);
+  ASSERT_EQ(pages.size(), 1u);
+  EXPECT_EQ(pages[0].data, jpeg);
+  // ESC D ADF first (the J6920DW form), then ESC S ADF (1b 53 0a "ADF").
+  EXPECT_TRUE(Contains(t.written(), {0x1b, 0x44, 0x0a, 0x41, 0x44, 0x46}));
+  EXPECT_TRUE(Contains(t.written(), {0x1b, 0x53, 0x0a, 0x41, 0x44, 0x46}))
+      << "flatbed offer on an ADF job must re-select with ESC S ADF";
+  EXPECT_FALSE(Contains(t.written(), {0x1b, 0x53, 0x0a, 0x46, 0x42}))
+      << "must never send ESC S FB on an ADF job";
+}
+
+// A loaded J6920DW-style feeder offer (source_flag 1) must NOT trigger the
+// ESC S ADF fallback: that model's wire sequence stays byte-for-byte as before.
+TEST(RunScan, AdfFeederOfferDoesNotFallBack) {
+  brscan::FakeTransport t;
+  QueueConnectPreamble(&t);
+  t.QueueRead(std::vector<uint8_t>{0x80});
+  t.QueueTimeout();
+  t.QueueRead(EncodeOfferFrame("300,300,1,292,3460,0,0,"));
+  const auto jpeg = MakeSyntheticJpeg(16, 8);
+  auto payload = EncodeBlockHeader(static_cast<uint16_t>(jpeg.size()));
+  payload.insert(payload.end(), jpeg.begin(), jpeg.end());
+  t.QueueRead(payload);
+  t.QueueRead(EncodeJobFinalTerminator(1));
+  auto params = ColorParams();
+  params.source = brscan::Source::kAdf;
+  params.area = brscan::Area{0, 0, 16, 8};
+  std::vector<brscan::ScanResult> pages;
+  ASSERT_EQ(brscan::RunScan(t, params, &pages), brscan::Status::kOk);
+  EXPECT_FALSE(Contains(t.written(), {0x1b, 0x53}))
+      << "no ESC S of any kind on a feeder-flagged offer";
+}
+
+// The MFC-J5720DW reports an empty feeder as a lone 0xc2 in reply to ESC X
+// (its select acks are 0x80 regardless of paper). Map it to kNoPaper, not a
+// generic protocol error.
+TEST(RunScan, AdfLoneC2AtExecuteReportsNoPaper) {
+  brscan::FakeTransport t;
+  QueueConnectPreamble(&t);
+  t.QueueRead(std::vector<uint8_t>{0x80});
+  t.QueueTimeout();
+  t.QueueRead(EncodeOfferFrame("300,300,2,213,2527,295,3484,"));
+  t.QueueRead(std::vector<uint8_t>{0x80});  // ESC S ADF ack
+  t.QueueTimeout();
+  t.QueueRead(EncodeOfferFrame("300,300,1,213,2527,0,0,"));
+  t.QueueRead(std::vector<uint8_t>{0xc2});  // lone: nothing follows
+  t.QueueTimeout();
+  auto params = ColorParams();
+  params.source = brscan::Source::kAdf;
+  std::vector<brscan::ScanResult> pages;
+  EXPECT_EQ(brscan::RunScan(t, params, &pages), brscan::Status::kNoPaper);
+  EXPECT_TRUE(pages.empty());
+}
+
+// An open-ended feeder job on the MFC-J5720DW streams a JPEG whose SOF height
+// is 65535 ("unknown") and that ends after the real sheet. RunScan must resolve
+// the true height, patch the SOF in the page it returns, and report that
+// height -- rather than rejecting the page (DecodeJpeg's dimension guard).
+TEST(RunScan, AdfUnknownJpegHeightIsResolved) {
+  brscan::FakeTransport t;
+  QueueConnectPreamble(&t);
+  t.QueueRead(std::vector<uint8_t>{0x80});
+  t.QueueTimeout();
+  t.QueueRead(EncodeOfferFrame("300,300,1,213,2527,0,0,"));
+
+  auto jpeg = MakeSyntheticJpeg(16, 32);  // two full 4:2:0 MCU rows
+  for (size_t i = 2; i + 6 < jpeg.size(); ++i) {  // forge SOF height 65535
+    if (jpeg[i] == 0xff && jpeg[i + 1] == 0xc0) {
+      jpeg[i + 5] = 0xff;
+      jpeg[i + 6] = 0xff;
+      break;
+    }
+  }
+  auto payload = EncodeBlockHeader(static_cast<uint16_t>(jpeg.size()));
+  payload.insert(payload.end(), jpeg.begin(), jpeg.end());
+  t.QueueRead(payload);
+  t.QueueRead(EncodeJobFinalTerminator(1));
+
+  auto params = ColorParams();
+  params.source = brscan::Source::kAdf;
+
+  std::vector<brscan::ScanResult> pages;
+  ASSERT_EQ(brscan::RunScan(t, params, &pages), brscan::Status::kOk);
+  ASSERT_EQ(pages.size(), 1u);
+  EXPECT_EQ(pages[0].width, 16);
+  EXPECT_EQ(pages[0].height, 32);
+  EXPECT_EQ(brscan::JpegSofHeight(pages[0].data.data(), pages[0].data.size()),
+            32);
+  brscan::Image image;
+  EXPECT_EQ(brscan::DecodeJpeg(pages[0].data.data(), pages[0].data.size(),
+                               &image),
+            brscan::Status::kOk);
 }
 
 // Duplex (D=DUP) empty feeder takes the same ESC D ADF ack path: a 0xc2
@@ -1245,7 +1367,7 @@ TEST(RunScan, AdfGrayLeadingC3WithFullPageIsNotPaperJam) {
   QueueConnectPreamble(&t);
   t.QueueRead(std::vector<uint8_t>{0x80});  // ESC D ADF ack: document loaded.
   t.QueueTimeout();                         // drain done
-  t.QueueRead(EncodeOfferFrame("300,300,2,292,4,427,3,"));
+  t.QueueRead(EncodeOfferFrame("300,300,1,292,4,427,3,"));
 
   auto payload = EncodeBlockHeader12(4);  // width = 4; anchors at [1]/[5].
   payload[0] = 0xc3;                      // readout's first byte is 0xc3.
@@ -1322,7 +1444,7 @@ TEST(RunScan, AdfGrayLeadingByte86WithFullPageIsNotCancelled) {
   QueueConnectPreamble(&t);
   t.QueueRead(std::vector<uint8_t>{0x80});  // ESC D ADF ack: document loaded.
   t.QueueTimeout();                         // drain done
-  t.QueueRead(EncodeOfferFrame("300,300,2,292,4,427,3,"));
+  t.QueueRead(EncodeOfferFrame("300,300,1,292,4,427,3,"));
 
   auto payload = EncodeBlockHeader12(4);  // width = 4; anchors at [1]/[5].
   payload[0] = 0x86;                      // readout's first byte is 0x86.

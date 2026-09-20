@@ -40,6 +40,18 @@ Source is selected explicitly: `ESC S FB` for the flatbed, or `ESC S FB`
 followed by `ESC D ADF` for the document feeder. It is not inferred from paper
 presence; a flatbed scan runs on the glass even with paper in the feeder.
 
+**Model note (MFC-J5720DW).** That unit acks `ESC D ADF` with `0x80` but does
+not switch to the feeder: its `ESC I` offer keeps the flatbed flag (third
+field `2`, a concrete `ymaxpx`) and `ESC X` scans the glass. It selects the
+feeder through `ESC S ADF` instead (offer flag `1`, `ymaxpx` `0`). `RunScan`
+therefore reads the offer's flag after `ESC D ADF` and, on a feeder job that
+came back as the flatbed, re-selects with `ESC S ADF` and renegotiates; the
+J6920DW's loaded feeder already answers flag `1`, so its wire sequence is
+unchanged. That model also reports an empty feeder as a lone `0xc2` at `ESC X`
+(its select acks are `0x80` regardless), and its open-ended feeder JPEG declares
+SOF height `65535` and simply ends after the sheet -- see PROVENANCE.md's
+MFC-J5720DW section and `ResolveUnknownJpegHeight` in `libbrscan/decode_jpeg.h`.
+
 ### Execute (`ESC X`) parameters
 
 ```

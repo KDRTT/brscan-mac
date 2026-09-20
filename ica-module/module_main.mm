@@ -107,6 +107,9 @@ struct DeviceContext {
   std::string ipAddress;
   std::string bonjourName;
   int port = kDefaultScanPort;
+  // Model geometry (paper sizes per unit, ADF sensor width), resolved from the
+  // Bonjour name at open; the J6920DW profile when the model is not listed.
+  const brscan::ica::DeviceProfile* profile = &brscan::ica::kProfileMfcJ6920dw;
   ICAScannerSessionID sessionID = 0;
   bool sessionOpen = false;
 
@@ -473,9 +476,12 @@ ICAError OpenTCPIPDevice(CFDictionaryRef params, ScannerObjectInfo* objectInfo) 
   CopyIntParam(params, kICAIPPortKey, &ctx->port);
   if (ctx->port <= 0) ctx->port = kDefaultScanPort;
 
+  ctx->profile = &brscan::ica::ProfileForDeviceName(ctx->bonjourName);
   os_log(Log(),
-         "OpenTCPIPDevice: endpoint ip='%{public}s' name='%{public}s' port=%d",
-         ctx->ipAddress.c_str(), ctx->bonjourName.c_str(), ctx->port);
+         "OpenTCPIPDevice: endpoint ip='%{public}s' name='%{public}s' port=%d "
+         "profile=%{public}s",
+         ctx->ipAddress.c_str(), ctx->bonjourName.c_str(), ctx->port,
+         ctx->profile->model);
 
   // Fill the vendor fields of the device object. Best-effort clean-room mapping
   // (confirm against a live trace): a scanner device object is objectType
@@ -705,7 +711,9 @@ ICAError GetParameters(const ScannerObjectInfo* deviceObjectInfo,
           "GetParameters: INCOMING theDict (%ld keys) BEFORE populate: %{private}@",
           CFDictionaryGetCount(pb->theDict),
           (__bridge NSDictionary*)pb->theDict);
-      brscan::ica::BuildScannerParameters(pb->theDict, selectedUnit);
+      brscan::ica::BuildScannerParameters(
+          pb->theDict, selectedUnit,
+          ctx ? *ctx->profile : brscan::ica::kProfileMfcJ6920dw);
       os_log(Log(),
              "GetParameters: described %ld parameter keys "
              "(selectedFunctionalUnitType=%d)",
@@ -944,6 +952,7 @@ ICAError SetParameters(const ScannerObjectInfo* deviceObjectInfo,
       // Default per-source caps: flatbed 2400 dpi, ADF 1200 dpi (Brother
       // optical maxima). TranslateScanParams clamps by the request's source.
       brscan::ica::ScanLimits limits;
+      if (ctx) limits.adf_sensor_width_at_300 = ctx->profile->adf_sensor_width_at_300;
       brscan::Params params = brscan::ica::TranslateScanParams(req, limits);
       if (ctx) ctx->params = params;
 

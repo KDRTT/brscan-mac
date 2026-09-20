@@ -162,6 +162,58 @@ TEST(DecodeJpeg, OversizedSofDimensionsIsProtocolError) {
   EXPECT_EQ(status, brscan::Status::kProtocolError);
 }
 
+TEST(JpegSofHeight, ReadsSofHeightOrMinusOne) {
+  const auto valid = MakeSyntheticJpeg(16, 8, 100, 100, 100, 90);
+  EXPECT_EQ(brscan::JpegSofHeight(valid.data(), valid.size()), 8);
+  const auto forged = ForgeSofDimensions(valid, 16, brscan::kJpegHeightUnknown);
+  EXPECT_EQ(brscan::JpegSofHeight(forged.data(), forged.size()),
+            brscan::kJpegHeightUnknown);
+  EXPECT_EQ(brscan::JpegSofHeight(valid.data(), 2), -1);  // SOI only.
+  const std::vector<uint8_t> junk = {0x00, 0x01, 0x02, 0x03};
+  EXPECT_EQ(brscan::JpegSofHeight(junk.data(), junk.size()), -1);
+}
+
+// The MFC-J5720DW feeder writes SOF height 65535 ("unknown") and simply ends
+// the entropy data after the real sheet. ResolveUnknownJpegHeight must find
+// the real row count and patch the SOF so a plain decode then works.
+TEST(ResolveUnknownJpegHeight, PatchesSofToDecodedRows) {
+  // 32 rows = two full 4:2:0 MCU rows; forge the header to "unknown".
+  const auto real = MakeSyntheticJpeg(16, 32, 100, 150, 200, 90);
+  std::vector<uint8_t> forged =
+      ForgeSofDimensions(real, 16, brscan::kJpegHeightUnknown);
+  brscan::Image before;
+  EXPECT_EQ(brscan::DecodeJpeg(forged.data(), forged.size(), &before),
+            brscan::Status::kProtocolError);
+
+  int height = 0;
+  ASSERT_EQ(brscan::ResolveUnknownJpegHeight(&forged, &height),
+            brscan::Status::kOk);
+  EXPECT_EQ(height, 32);
+  EXPECT_EQ(brscan::JpegSofHeight(forged.data(), forged.size()), 32);
+  brscan::Image after;
+  ASSERT_EQ(brscan::DecodeJpeg(forged.data(), forged.size(), &after),
+            brscan::Status::kOk);
+  EXPECT_EQ(after.width, 16);
+  EXPECT_EQ(after.height, 32);
+}
+
+TEST(ResolveUnknownJpegHeight, KnownHeightIsLeftAlone) {
+  std::vector<uint8_t> jpeg = MakeSyntheticJpeg(16, 8, 1, 2, 3, 90);
+  const auto copy = jpeg;
+  int height = 0;
+  EXPECT_EQ(brscan::ResolveUnknownJpegHeight(&jpeg, &height),
+            brscan::Status::kOk);
+  EXPECT_EQ(height, 8);
+  EXPECT_EQ(jpeg, copy);
+}
+
+TEST(ResolveUnknownJpegHeight, NoSofIsProtocolError) {
+  std::vector<uint8_t> junk = {0xff, 0xd8, 0xff, 0xd9};
+  int height = 0;
+  EXPECT_EQ(brscan::ResolveUnknownJpegHeight(&junk, &height),
+            brscan::Status::kProtocolError);
+}
+
 TEST(DecodeJpeg, EmptyBufferIsProtocolError) {
   brscan::Image image;
   const auto status = brscan::DecodeJpeg(nullptr, 0, &image);

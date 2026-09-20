@@ -9,6 +9,19 @@ models like the MFC-J6920DW don't advertise eSCL, so macOS has no way to
 scan from them. `brscan-mac` restores scanning by speaking Brother's raw
 scan protocol from a native arm64 build.
 
+## Supported models
+
+| Model | Flatbed | ADF | Notes |
+|---|---|---|---|
+| MFC-J6920DW | yes | yes | The development unit; A3 glass and feeder |
+| MFC-J5720DW | yes | yes | A4 glass, A4-wide / Legal-long feeder. Selects the feeder with `ESC S ADF` and streams open-ended JPEGs; both handled automatically (see PROVENANCE.md) |
+
+Other Brother network MFPs of the same generation very likely speak the same
+protocol. To try one: add its Bonjour `mdl` string to
+`ica-module/DeviceMatchingInfo.plist` (find it with `dns-sd -L`), add a
+`DeviceProfile` for its glass/feeder size in `ica-module/scan_translate.h`,
+and run `build/brscan-cli` against it first.
+
 ## Status
 
 Early development. The protocol core and a command-line scanning tool come

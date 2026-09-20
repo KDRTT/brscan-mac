@@ -157,10 +157,22 @@ constexpr int kAdfCaptureDpi = 300;
 
 }  // namespace
 
-int AdfSensorWidthAtDpi(int dpi) {
+int AdfSensorWidthAtDpi(int dpi, int sensor_width_at_300) {
   if (dpi <= 0) return 0;
   return static_cast<int>(std::lround(
-      kAdfSensorWidthAt300 * (static_cast<double>(dpi) / kAdfCaptureDpi)));
+      sensor_width_at_300 * (static_cast<double>(dpi) / kAdfCaptureDpi)));
+}
+
+const DeviceProfile& ProfileForDeviceName(const std::string& device_name) {
+  // Listed explicitly rather than iterated so the fallback is the FIRST entry
+  // by construction. Substring match: the host's name is "Brother <mdl>" (the
+  // Bonjour `ty` TXT) or the bare service name, either of which contains mdl.
+  static constexpr const DeviceProfile* kProfiles[] = {&kProfileMfcJ6920dw,
+                                                       &kProfileMfcJ5720dw};
+  for (const DeviceProfile* profile : kProfiles) {
+    if (device_name.find(profile->model) != std::string::npos) return *profile;
+  }
+  return kProfileMfcJ6920dw;
 }
 
 int CenteredAdfX0(int sensor_width_at_dpi, int requested_width) {
@@ -256,7 +268,9 @@ Params TranslateScanParams(const ScanRequest& req, const ScanLimits& limits) {
     if (feeder) {
       // Center using request_dpi (the scale req.area_* was computed at), so the
       // requested width and the sensor width always share one dpi scale.
-      x0 = CenteredAdfX0(AdfSensorWidthAtDpi(request_dpi), width);
+      x0 = CenteredAdfX0(
+          AdfSensorWidthAtDpi(request_dpi, limits.adf_sensor_width_at_300),
+          width);
     }
     p.area = Area{x0, req.area_y0, x0 + width, req.area_y1};
   } else {

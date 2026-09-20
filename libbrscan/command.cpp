@@ -65,6 +65,8 @@ std::vector<uint8_t> EncodeSelectFlatbed() { return Frame('S', "FB\n"); }
 
 std::vector<uint8_t> EncodeSelectAdf() { return Frame('D', "ADF\n"); }
 
+std::vector<uint8_t> EncodeSelectAdfViaS() { return Frame('S', "ADF\n"); }
+
 std::vector<uint8_t> EncodeInfo(int x_dpi, int y_dpi, ScanMode mode,
                                  bool duplex, bool button_flow) {
   std::string body;

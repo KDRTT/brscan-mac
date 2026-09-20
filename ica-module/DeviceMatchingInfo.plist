@@ -84,6 +84,21 @@
         <key>device type</key>
         <string>scanner</string>
       </dict>
+      <dict>
+        <key>ICABonjourTXTRecordKey</key>
+        <dict>
+          <key>mdl</key>
+          <string>MFC-J5720DW</string>
+          <key>mfg</key>
+          <string>Brother</string>
+        </dict>
+        <key>device events</key>
+        <array>
+          <string>scan</string>
+        </array>
+        <key>device type</key>
+        <string>scanner</string>
+      </dict>
     </array>
   </dict>
   <key>Version</key>

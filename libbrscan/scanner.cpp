@@ -8,6 +8,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -744,6 +745,14 @@ Status RunColorScan(Framer* framer, int timeout_ms, const BandCallback& on_band,
   // interleaves two pages' chunks, so each page index keeps its own decoder
   // state (matching the per-page JPEG accumulators above).
   std::map<int, std::unique_ptr<IncrementalJpegDecoder>> decoders;
+  // Pages whose SOF height is kJpegHeightUnknown (65535): the device did not
+  // know the sheet length when it started the JPEG (the MFC-J5720DW feeder on
+  // an open-ended A=...,0 job). Such a page cannot be streamed band-by-band --
+  // the first band would announce a 65535-row page -- so its decoder is only
+  // created at end-of-page, after ResolveUnknownJpegHeight has patched the SOF
+  // to the real row count. The J6920DW never sets this (it writes the true
+  // height), so its pages stream exactly as before.
+  std::set<int> deferred_height;
   // Finished pages, keyed by 1-based page index, flushed to *out in ascending
   // (document) order at job end rather than in completion order (see this
   // function's doc comment and RunRlengthScan's `finished` for the C9 rationale).
@@ -781,6 +790,31 @@ Status RunColorScan(Framer* framer, int timeout_ms, const BandCallback& on_band,
 
       int page_width = 0;
       int page_height = 0;
+      if (deferred_height.erase(pidx) > 0) {
+        // Open-ended page: fix the SOF height in place first, so the JPEG the
+        // ScanResult carries decodes as an ordinary page downstream. Then, when
+        // streaming, run the band decoder over the whole (now well-formed)
+        // payload in one go; it announces the resolved height from band one.
+        int resolved = 0;
+        const Status rs = ResolveUnknownJpegHeight(&jpeg, &resolved);
+        if (rs != Status::kOk) return rs;
+        if (on_band) {
+          auto& decoder = decoders[pidx];
+          decoder = std::make_unique<IncrementalJpegDecoder>(
+              [&on_band, pidx](int start_row, int num_rows,
+                               const uint8_t* rows, size_t size,
+                               int full_width, int full_height) {
+                return EmitBand(on_band, pidx - 1, PixelFormat::kRgb,
+                                full_width, full_height, start_row, num_rows,
+                                rows, size) == Status::kOk;
+              });
+          const Status feed = decoder->Feed(jpeg.data(), jpeg.size());
+          if (feed != Status::kOk) {
+            flush_finished();
+            return feed;
+          }
+        }
+      }
       if (on_band) {
         // Streaming: the incremental decoder already produced every band; it
         // also carries the page's SOF dimensions (identical to what DecodeJpeg
@@ -860,7 +894,15 @@ Status RunColorScan(Framer* framer, int timeout_ms, const BandCallback& on_band,
     // growing memory without bound.
     if (jpeg.size() > max_page_bytes) return Status::kProtocolError;
 
-    if (on_band) {
+    // First chunk of a page: an SOF height of kJpegHeightUnknown means the
+    // height is only known once the data ends, so the page is decoded at
+    // end-of-page instead of streamed (see deferred_height).
+    if (before == 0 &&
+        JpegSofHeight(jpeg.data(), jpeg.size()) == kJpegHeightUnknown) {
+      deferred_height.insert(header.page_index);
+    }
+
+    if (on_band && deferred_height.count(header.page_index) == 0) {
       // Feed only this chunk's fresh bytes into the page's decoder, emitting
       // whatever scanlines they complete. page_index is the 0-based device
       // page index (pidx - 1).
@@ -1362,6 +1404,16 @@ Status RunReadout(Framer* framer, const Params& exec_params, int timeout_ms,
       if (s != Status::kOk) return s;
       // A second byte followed: real image data, not a cancel. Fall through.
     }
+    if (lead[0] == kAdfAckEmpty) {
+      std::vector<uint8_t> lead2;
+      s = framer->Peek(2, kLoneStatusConfirmMs, &lead2);
+      // Lone 0xc2 at ESC X: the feeder's paper sensor sees no sheet. The
+      // MFC-J5720DW reports an empty feeder here (its ESC D / ESC S ADF acks
+      // are 0x80 regardless) rather than at the source-select ack.
+      if (s == Status::kTimeout) return Status::kNoPaper;
+      if (s != Status::kOk) return s;
+      // A second byte followed: real image data. Fall through.
+    }
   }
 
   // Color (CGRAY/C=JPEG) has its own de-interleaving readout: a duplex feed
@@ -1566,6 +1618,31 @@ Status RunScan(Transport& transport, const Params& params,
   Offer offer;
   status = ReadOfferReply(&framer, kAckTimeoutMs, &offer);
   if (status != Status::kOk) return status;
+
+  // Feeder requested but the device settled on the glass: some models (the
+  // MFC-J5720DW) ack ESC D ADF and ignore it, offering the flatbed
+  // (source_flag 2, concrete height) instead of the feeder (source_flag 1,
+  // height 0). Executing now would scan an empty glass. Re-select the feeder
+  // with ESC S ADF -- the form that model honours -- and renegotiate. The
+  // J6920DW never reaches this branch: its loaded feeder offers source_flag 1
+  // and its empty one was caught at the ESC D ack above.
+  if (params.source == Source::kAdf &&
+      offer.source_flag == kOfferSourceFlatbed) {
+    status = send(EncodeSelectAdfViaS());
+    if (status != Status::kOk) return status;
+    std::vector<uint8_t> ack;
+    status = framer.Peek(1, kAckTimeoutMs, &ack);
+    if (status == Status::kTimeout) return Status::kNoPaper;
+    if (status != Status::kOk) return status;
+    if (ack[0] == kAdfAckEmpty) return Status::kNoPaper;
+    status = framer.DrainBufferedQuiet(kDrainIdleTimeoutMs);
+    if (status != Status::kOk) return status;
+    status = send(EncodeInfo(params.x_dpi, params.y_dpi, params.mode,
+                             params.duplex));
+    if (status != Status::kOk) return status;
+    status = ReadOfferReply(&framer, kAckTimeoutMs, &offer);
+    if (status != Status::kOk) return status;
+  }
 
   // An all-zero Params::area means "not set by the caller": request the
   // full area the offer just granted.

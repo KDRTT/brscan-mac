@@ -75,6 +75,11 @@ struct Offer {
   int y_dpi;
   int width_px;
   int height_px;
+  // The offer's third CSV field: which source the device will scan from.
+  // 1 = the document feeder (the offer's height is then 0, "length unknown");
+  // 2 = the flatbed glass (a concrete height). See kOfferSourceFeeder /
+  // kOfferSourceFlatbed in response.h and docs/PROTOCOL.md.
+  int source_flag;
 };
 
 // Pixel layout of a decoded Image.

@@ -55,6 +55,8 @@
 
 #import <CoreFoundation/CoreFoundation.h>
 
+#include "scan_translate.h"  // DeviceProfile.
+
 namespace brscan::ica {
 
 // Populates `dict` (an already-created CFMutableDictionaryRef owned by the
@@ -70,7 +72,11 @@ namespace brscan::ica {
 // the feeder reads its selection back unchanged instead of looping on a
 // flatbed-only answer. Any value other than the document feeder is treated as
 // the flatbed.
+//
+// `profile` is the model's geometry (scan_translate.h DeviceProfile): it gates
+// which document sizes each unit offers and sets the unit's physical extent.
 void BuildScannerParameters(CFMutableDictionaryRef dict,
-                            int selectedFunctionalUnitType);
+                            int selectedFunctionalUnitType,
+                            const DeviceProfile& profile);
 
 }  // namespace brscan::ica

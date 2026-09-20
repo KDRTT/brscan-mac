@@ -45,6 +45,14 @@ TEST(Command, EncodeSelectAdf) {
   EXPECT_EQ(brscan::EncodeSelectAdf(), want);
 }
 
+TEST(Command, EncodeSelectAdfViaS) {
+  // 1b 53 0a 41 44 46 0a 80  =  ESC S \n "ADF" \n 0x80 -- the feeder select the
+  // MFC-J5720DW honours (it ignores ESC D ADF).
+  const std::vector<uint8_t> want = {0x1b, 0x53, 0x0a, 0x41, 0x44,
+                                      0x46, 0x0a, 0x80};
+  EXPECT_EQ(brscan::EncodeSelectAdfViaS(), want);
+}
+
 namespace {
 
 // Fixtures are captured as ESC X (execute) bytes only; these tests assert

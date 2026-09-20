@@ -6,6 +6,7 @@
 #import <Foundation/Foundation.h>
 
 #include <algorithm>
+#include <cmath>
 #include <optional>
 #include <string>
 
@@ -187,24 +188,39 @@ NSArray* ResolutionArray(bool feeder) {
 // Only the selected unit's set is advertised this task (see
 // BuildScannerParameters); the `feeder` parameter keeps the per-unit geometry
 // correct and lets a follow-up switch the flat set when the host reselects.
-NSDictionary* BuildUnit(bool feeder) {
+NSDictionary* BuildUnit(bool feeder, const DeviceProfile& profile) {
   NSMutableArray* supportedSizes = [NSMutableArray array];
+
+  // The selected unit's maximum sheet, in pixels at 300 dpi (the scale of
+  // paper_size.cpp's captured areas). A size is offered on this unit only when
+  // it fits -- the J6920DW profile's maxima admit every size, so it keeps the
+  // original list; an A4-class model such as the J5720DW drops A3 / Ledger /
+  // JIS B4 on both units and Legal on the flatbed (Legal fits its ADF only).
+  const int unitMaxW =
+      feeder ? profile.feeder_max_w_at_300 : profile.flatbed_max_w_at_300;
+  const int unitMaxH =
+      feeder ? profile.feeder_max_h_at_300 : profile.flatbed_max_h_at_300;
+  const auto fits = [&](int widthPx, int heightPx) {
+    return widthPx <= unitMaxW && heightPx <= unitMaxH;
+  };
+  // Pixels at 300 dpi for a nominal mm dimension, for the sizes below that have
+  // no captured area (JIS B4/B5, A6, 3R, 5R).
+  const auto mmToPx = [](double mm) {
+    return static_cast<int>(std::lround(mm / 25.4 * kReferenceDpi));
+  };
   // ICScannerDocumentTypeDefault (0) heads both units: it is the platten size for
   // the flatbed and the Auto / mixed-size choice for the feeder (the ADF has no
   // fixed page size, so the host lets the device auto-detect the sheet). Listing
   // it first makes it the current/default supported size for each unit.
   [supportedSizes addObject:Int(kDocumentTypeDefault)];
 
-  int maxWidthPx = 0;
-  int maxHeightPx = 0;
   for (const PaperChoice& choice : kPaperChoices) {
     if (feeder && choice.flatbedOnly) continue;
     std::optional<brscan::Area> area =
         brscan::scand::AreaForPaper(choice.token, kReferenceDpi);
-    if (area) {
-      maxWidthPx = std::max(maxWidthPx, area->x1 - area->x0);
-      maxHeightPx = std::max(maxHeightPx, area->y1 - area->y0);
-    }
+    // The captured areas are centered within the J6920DW's 3472 px ADF sensor,
+    // so x1 - x0 (not x1) is the sheet's own width.
+    if (area && !fits(area->x1 - area->x0, area->y1 - area->y0)) continue;
     const int docType = DocumentTypeForPaperToken(choice.token);
     if (docType != kDocumentTypeNone) [supportedSizes addObject:Int(docType)];
   }
@@ -219,8 +235,12 @@ NSDictionary* BuildUnit(bool feeder) {
   // above from the paper tokens do not regress. Advertised on BOTH units: JIS B4
   // (257x364 mm) and JIS B5 (182x257 mm) sit inside the ADF envelope, so the
   // feeder lists them too, matching the Brother driver.
-  [supportedSizes addObject:Int(kDocumentTypeJISB5)];
-  [supportedSizes addObject:Int(kDocumentTypeJISB4)];
+  if (fits(mmToPx(182), mmToPx(257))) {
+    [supportedSizes addObject:Int(kDocumentTypeJISB5)];
+  }
+  if (fits(mmToPx(257), mmToPx(364))) {
+    [supportedSizes addObject:Int(kDocumentTypeJISB4)];
+  }
 
   // A6 (105x148 mm) and the small photo sizes 3R (3.5x5) and 5R (5x7) are
   // FLATBED-ONLY: each is under the 148 mm ADF minimum width, so the feeder
@@ -230,9 +250,15 @@ NSDictionary* BuildUnit(bool feeder) {
   // directly. All three fit well inside the advertised platen extent, so the
   // physical bounds computed above do not regress.
   if (!feeder) {
-    [supportedSizes addObject:Int(kDocumentTypeA6)];
-    [supportedSizes addObject:Int(kDocumentType3R)];
-    [supportedSizes addObject:Int(kDocumentType5R)];
+    if (fits(mmToPx(105), mmToPx(148))) {
+      [supportedSizes addObject:Int(kDocumentTypeA6)];
+    }
+    if (fits(mmToPx(3.5 * 25.4), mmToPx(5 * 25.4))) {
+      [supportedSizes addObject:Int(kDocumentType3R)];
+    }
+    if (fits(mmToPx(5 * 25.4), mmToPx(7 * 25.4))) {
+      [supportedSizes addObject:Int(kDocumentType5R)];
+    }
   }
 
   // Current/default supported size: the first entry, which is the platten Default
@@ -244,20 +270,20 @@ NSDictionary* BuildUnit(bool feeder) {
           : kDocumentTypeDefault;
 
   // Physical platen extent in INCHES (ICAP_UNITS = inches, below). This is the
-  // real scannable rectangle: its width is the widest sheet (A3, 3472 px@300 =
-  // 11.57 in) and its height is the longest sheet (Ledger, 5053 px@300 = 16.84
-  // in). Both A3 (3472x4913) and Ledger (3264x5053) fit inside it, so neither
-  // regresses. It is NOT a phantom -- the J6920DW glass is A3-capable and the
-  // bounding rectangle is what a real overview platen occupies; the host draws
-  // the dashed platen and a paper-size selection at the correct proportion of it
-  // (e.g. US Letter 8.5x11 in renders ~73% wide x ~65% tall). Expressed in
+  // real scannable rectangle of the selected unit, from the model profile: for
+  // the J6920DW its width is the widest sheet (A3, 3472 px@300 = 11.57 in) and
+  // its height the longest (Ledger, 5053 px@300 = 16.84 in), the same bounding
+  // rectangle the original computed from the paper table; for the J5720DW it is
+  // the A4 glass (8.5 x 11.69 in) or the Legal-long feeder. Every size offered
+  // above fits inside it by construction. The host draws the dashed platen and
+  // a paper-size selection at the correct proportion of it (e.g. US Letter
+  // 8.5x11 in renders ~73% wide x ~65% tall on the A3 glass). Expressed in
   // inches, not pixel counts, because a physical size in pixels is meaningless
   // (pixels depend on dpi) and the host mis-scaled the platen when it was given
   // pixel counts (Task 14 live defect).
-  const double physWidthInches =
-      static_cast<double>(maxWidthPx) / kReferenceDpi;
+  const double physWidthInches = static_cast<double>(unitMaxW) / kReferenceDpi;
   const double physHeightInches =
-      static_cast<double>(maxHeightPx) / kReferenceDpi;
+      static_cast<double>(unitMaxH) / kReferenceDpi;
 
   return @{
     @"ICAP_XRESOLUTION" : Enumeration(ResolutionArray(feeder),
@@ -286,7 +312,8 @@ NSDictionary* BuildUnit(bool feeder) {
 }  // namespace
 
 void BuildScannerParameters(CFMutableDictionaryRef dict,
-                            int selectedFunctionalUnitType) {
+                            int selectedFunctionalUnitType,
+                            const DeviceProfile& profile) {
   if (dict == nullptr) return;
   NSMutableDictionary* d = (__bridge NSMutableDictionary*)dict;
 
@@ -307,7 +334,7 @@ void BuildScannerParameters(CFMutableDictionaryRef dict,
   // rendered no controls from it. This flat-under-`device` layout is the shape
   // its scanner modules actually consume.)
   NSMutableDictionary* deviceDict =
-      [NSMutableDictionary dictionaryWithDictionary:BuildUnit(feeder)];
+      [NSMutableDictionary dictionaryWithDictionary:BuildUnit(feeder, profile)];
 
   // Source (flatbed vs feeder) and duplex controls for the selected unit.
   // CAP_FEEDERENABLED tracks the selection. Duplex is a feeder-only capability:

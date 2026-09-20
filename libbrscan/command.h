@@ -34,6 +34,15 @@ std::vector<uint8_t> EncodeSelectFlatbed();
 // ESC D ADF: select the document feeder source.
 std::vector<uint8_t> EncodeSelectAdf();
 
+// ESC S ADF: the document-feeder select that models such as the MFC-J5720DW
+// honour. That model acks ESC D ADF with 0x80 but ignores it (its ESC I offer
+// still names the flatbed, source_flag 2, and ESC X scans the glass); the
+// same select through ESC S switches it to the feeder (offer source_flag 1,
+// height 0). Sent by RunScan only as a fallback after an ESC D ADF whose
+// offer came back flatbed, so the J6920DW's wire sequence is unchanged.
+// Source: live probing of an MFC-J5720DW, 2026-09-20 (PROVENANCE.md).
+std::vector<uint8_t> EncodeSelectAdfViaS();
+
 // ESC I: negotiate resolution, mode, and simplex/duplex before a scan.
 // button_flow appends S=NORMAL_SCAN even for a color mode (the scan-button
 // flow carries it unconditionally; see docs/BUTTON.md). It defaults false

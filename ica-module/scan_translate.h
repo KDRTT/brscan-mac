@@ -281,6 +281,10 @@ inline constexpr int kMaxFeederDpi = 1200;
 struct ScanLimits {
   int max_dpi_flatbed = kMaxFlatbedDpi;
   int max_dpi_feeder = kMaxFeederDpi;
+  // The ADF sensor's full width at 300 dpi, within which a feeder request is
+  // re-centered (see kAdfSensorWidthAt300 / CenteredAdfX0). Per model: taken
+  // from DeviceProfile::adf_sensor_width_at_300.
+  int adf_sensor_width_at_300 = 3472;
 };
 
 // Default resolution when the host supplies none or an invalid one.
@@ -298,10 +302,49 @@ inline constexpr int kDefaultBrightnessContrast = 50;
 // edge is cut off.
 inline constexpr int kAdfSensorWidthAt300 = 3472;
 
-// Scales the ADF sensor's full pixel width (kAdfSensorWidthAt300) to `dpi`,
-// rounding to the nearest pixel (matching AreaForPaper's dpi/300 scaling). `dpi`
-// must be > 0. Pure.
-int AdfSensorWidthAtDpi(int dpi);
+// Scales an ADF sensor's full pixel width at 300 dpi (`sensor_width_at_300`,
+// default kAdfSensorWidthAt300) to `dpi`, rounding to the nearest pixel
+// (matching AreaForPaper's dpi/300 scaling). `dpi` must be > 0. Pure.
+int AdfSensorWidthAtDpi(int dpi,
+                        int sensor_width_at_300 = kAdfSensorWidthAt300);
+
+// Per-model geometry the module advertises and clamps to. The protocol is the
+// same across the Brother inkjet MFP family this project targets, but the glass
+// and feeder differ: the MFC-J6920DW has an A3 flatbed and A3 ADF, the
+// MFC-J5720DW an A4 flatbed (215.9 x 297 mm) and a Legal-length A4-width ADF
+// (Brother public specs). Everything is in pixels at 300 dpi, the scale of
+// daemon/paper_size.cpp's kPaperTable, so a paper token is offered on a unit
+// exactly when its captured area fits that unit's maximum here.
+struct DeviceProfile {
+  const char* model;  // Bonjour `mdl` TXT value / substring of the device name.
+  int flatbed_max_w_at_300;
+  int flatbed_max_h_at_300;
+  int feeder_max_w_at_300;
+  int feeder_max_h_at_300;
+  int adf_sensor_width_at_300;  // Feeder requests are centered within this.
+};
+
+// MFC-J6920DW: A3 glass, A3 ADF. The maxima are the bounding rectangle of the
+// captured A3 / Ledger areas (3472 wide, 5053 tall), i.e. every kPaperTable
+// token fits -- this profile reproduces the module's original behaviour.
+inline constexpr DeviceProfile kProfileMfcJ6920dw{"MFC-J6920DW", 3472, 5053,
+                                                  3472, 5053, 3472};
+
+// MFC-J5720DW: A4 glass and an A4-wide, Legal-long ADF. The pixel maxima are
+// what the unit itself offers at 300 dpi (live ESC I probes, 2026-09-20):
+// flatbed `300,300,2,213,2527,295,3484,` -> 2527 x 3484; feeder
+// `300,300,1,213,2527,0,0,` -> 2527 wide, open-ended (Brother's spec caps the
+// ADF at Legal, 355.6 mm = 4200 px). A fed A4 sheet came back 2512 x 3504 with
+// the content spanning the full width, so the feeder sensor is that same 2527
+// px and pages are corner-registered in it (no re-centering slack).
+inline constexpr DeviceProfile kProfileMfcJ5720dw{"MFC-J5720DW", 2527, 3484,
+                                                  2527, 4200, 2527};
+
+// Picks the profile whose `model` occurs in `device_name` (the Bonjour service
+// name the host hands ICD_ScannerOpenTCPIPDevice, e.g. "Brother MFC-J5720DW").
+// Unknown names get kProfileMfcJ6920dw, the model the module was built
+// against, so an unlisted Brother keeps the original behaviour. Pure.
+const DeviceProfile& ProfileForDeviceName(const std::string& device_name);
 
 // Left edge (x0) that horizontally centers a `requested_width` scan window
 // within `sensor_width_at_dpi` (the ADF sensor width at the scan dpi): x0 =

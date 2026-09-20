@@ -477,6 +477,86 @@ TEST(AdfCenteringTest, SensorWidthScalesWithDpi) {
   EXPECT_EQ(AdfSensorWidthAtDpi(0), 0);                       // Guard.
 }
 
+TEST(AdfCenteringTest, SensorWidthTakesPerModelWidth) {
+  // An A4-class feeder (J5720DW profile) scales its own narrower sensor.
+  const int w = kProfileMfcJ5720dw.adf_sensor_width_at_300;
+  EXPECT_EQ(AdfSensorWidthAtDpi(300, w), w);
+  EXPECT_EQ(AdfSensorWidthAtDpi(600, w), w * 2);
+}
+
+TEST(AdfCenteringTest, FeederRequestCentersInProfileSensorWidth) {
+  // The same Letter-wide feeder request centers differently per model: the
+  // ScanLimits carry the profile's sensor width into the translation.
+  ScanRequest r;
+  r.has_functional_unit = true;
+  r.functional_unit = 3;  // Document feeder.
+  r.has_resolution = true;
+  r.resolution = 300;
+  r.has_area = true;
+  r.area_x0 = 0;
+  r.area_y0 = 0;
+  r.area_x1 = 2550;
+  r.area_y1 = 3300;
+  ScanLimits a4;
+  a4.adf_sensor_width_at_300 = kProfileMfcJ5720dw.adf_sensor_width_at_300;
+  const Params p = TranslateScanParams(r, a4);
+  const int width = p.area.x1 - p.area.x0;  // 2544 after 16-px alignment.
+  EXPECT_EQ(p.area.x0, CenteredAdfX0(a4.adf_sensor_width_at_300, width));
+  EXPECT_LT(p.area.x0, 464);  // Narrower sensor -> less left offset than A3.
+}
+
+// ---------------------------------------------------------------------------
+// Model profiles (ProfileForDeviceName).
+// ---------------------------------------------------------------------------
+
+TEST(DeviceProfileTest, MatchesModelSubstringOfBonjourName) {
+  EXPECT_STREQ(ProfileForDeviceName("Brother MFC-J5720DW").model,
+               "MFC-J5720DW");
+  EXPECT_STREQ(ProfileForDeviceName("Brother MFC-J6920DW").model,
+               "MFC-J6920DW");
+}
+
+TEST(DeviceProfileTest, UnknownModelFallsBackToJ6920dw) {
+  EXPECT_EQ(&ProfileForDeviceName("Brother MFC-J9999DW"), &kProfileMfcJ6920dw);
+  EXPECT_EQ(&ProfileForDeviceName(""), &kProfileMfcJ6920dw);
+}
+
+TEST(DeviceProfileTest, J6920dwProfileAdmitsEveryCapturedSize) {
+  // The fallback profile must keep the original behaviour: every kPaperTable
+  // area fits both of its units, so no size is dropped for the J6920DW.
+  const DeviceProfile& p = kProfileMfcJ6920dw;
+  for (const char* token : {"LETTER", "LEGAL", "A4", "LEDGER", "A3", "A5",
+                            "EXECUTIVE", "PHOTO", "BCARD"}) {
+    const auto area = brscan::scand::AreaForPaper(token, 300);
+    ASSERT_TRUE(area.has_value()) << token;
+    EXPECT_LE(area->x1 - area->x0, p.flatbed_max_w_at_300) << token;
+    EXPECT_LE(area->y1 - area->y0, p.flatbed_max_h_at_300) << token;
+  }
+  EXPECT_EQ(p.adf_sensor_width_at_300, kAdfSensorWidthAt300);
+}
+
+TEST(DeviceProfileTest, J5720dwProfileDropsA3ClassSizes) {
+  const DeviceProfile& p = kProfileMfcJ5720dw;
+  const auto fitsFlatbed = [&](const char* token) {
+    const auto a = brscan::scand::AreaForPaper(token, 300);
+    return a && a->x1 - a->x0 <= p.flatbed_max_w_at_300 &&
+           a->y1 - a->y0 <= p.flatbed_max_h_at_300;
+  };
+  const auto fitsFeeder = [&](const char* token) {
+    const auto a = brscan::scand::AreaForPaper(token, 300);
+    return a && a->x1 - a->x0 <= p.feeder_max_w_at_300 &&
+           a->y1 - a->y0 <= p.feeder_max_h_at_300;
+  };
+  EXPECT_TRUE(fitsFlatbed("A4"));
+  EXPECT_TRUE(fitsFlatbed("LETTER"));
+  EXPECT_FALSE(fitsFlatbed("LEGAL"));  // Longer than the A4 glass.
+  EXPECT_FALSE(fitsFlatbed("A3"));
+  EXPECT_FALSE(fitsFlatbed("LEDGER"));
+  EXPECT_TRUE(fitsFeeder("LEGAL"));  // The ADF takes Legal length.
+  EXPECT_FALSE(fitsFeeder("A3"));
+  EXPECT_FALSE(fitsFeeder("LEDGER"));
+}
+
 TEST(AdfCenteringTest, CentersNarrowWindow) {
   // (3472 - 2512) / 2 = 480.
   EXPECT_EQ(CenteredAdfX0(3472, 2512), 480);
