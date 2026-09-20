@@ -5,8 +5,8 @@ printers that predate driverless AirScan (eSCL).
 
 Brother shipped its last macOS scanner driver as an Intel-only binary built
 against the macOS 10.10 SDK. On Apple Silicon that binary can't load, and
-models like the MFC-J6920DW don't advertise eSCL, so macOS has no way to
-scan from them. `brscan-mac` restores scanning by speaking Brother's raw
+models like the MFC-J6920DW and MFC-J5720DW don't advertise eSCL, so macOS
+has no way to scan from them. `brscan-mac` restores scanning by speaking Brother's raw
 scan protocol from a native arm64 build.
 
 ## Supported models
@@ -35,6 +35,17 @@ compiler, and libjpeg-turbo. On a machine with MacPorts:
 ```bash
 /opt/local/bin/cmake -B build
 /opt/local/bin/cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+With Homebrew instead, install the three build dependencies (libjpeg-turbo is
+located through pkg-config, which Homebrew does not install by default) and
+point CMake at Homebrew's pkg-config files:
+
+```bash
+brew install cmake jpeg-turbo pkgconf
+PKG_CONFIG_PATH=/opt/homebrew/opt/jpeg-turbo/lib/pkgconfig cmake -B build
+cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
